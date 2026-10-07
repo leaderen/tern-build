@@ -45,16 +45,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      # 这是公开仓库,日志登录用户都能看。参数只从事件文件里读(不经过步骤的 env,那会被原样打印),
+      # 能认出品牌的值全部打码。
       - name: 读取参数
-        env:
-          PAYLOAD: ${{ toJson(github.event.client_payload) }}
-          INPUTS: ${{ toJson(inputs) }}
         run: |
           python3 - <<'PY'
           import json, os, re, base64
-          payload = json.loads(os.environ.get("PAYLOAD") or "null") or {}
-          inputs = json.loads(os.environ.get("INPUTS") or "null") or {}
-          p = {**inputs, **payload}
+          event = json.load(open(os.environ["GITHUB_EVENT_PATH"]))
+          p = {**(event.get("inputs") or {}), **(event.get("client_payload") or {})}
           def need(k, default=""):
               v = str(p.get(k) or default).strip()
               return v
@@ -93,11 +91,16 @@ jobs:
               print("::add-mask::" + pw)
               out["P_KEYSTORE_FILE"] = path
               out["P_KEYSTORE_PASSWORD"] = pw
+          for k in ("P_APP_NAME", "P_PACKAGE_NAME", "P_PANEL_URLS", "P_CONFIG_URLS", "P_CONFIG_XOR_KEY",
+                    "P_LOGO_URL", "P_LOGO_FILE_ID", "P_NOTIFY_CHAT_ID"):
+              v = out[k]
+              for part in {v, *v.split(",")}:
+                  if len(part) >= 4:
+                      print("::add-mask::" + part)
           with open(os.environ["GITHUB_ENV"], "a") as f:
               for k, v in out.items():
                   f.write(f"{k}<<__EOV__\n{v}\n__EOV__\n")
-          print("app:", out["P_APP_NAME"], out["P_PACKAGE_NAME"], out["P_VERSION_NAME"], f"({out['P_VERSION_CODE']})",
-                "abis:", out["P_ABIS"], "logo:", "yes" if (out["P_LOGO_URL"] or out["P_LOGO_FILE_ID"]) else "default",
+          print("version:", out["P_VERSION_NAME"], f"({out['P_VERSION_CODE']})", "abis:", out["P_ABIS"], "logo:", "yes" if (out["P_LOGO_URL"] or out["P_LOGO_FILE_ID"]) else "default",
                 "signing:", "brand" if ks else "repo-secret")
           PY
 
@@ -187,7 +190,8 @@ jobs:
       - name: 打包
         working-directory: src
         env:
-          APP_NAME: ${{ env.P_APP_NAME }}
+          # 不叫 APP_NAME:gradlew 脚本里有同名变量,会把它覆盖成 "Gradle"。
+          APP_LABEL: ${{ env.P_APP_NAME }}
           APP_ID: ${{ env.P_PACKAGE_NAME }}
           VERSION_NAME: ${{ env.P_VERSION_NAME }}
           VERSION_CODE: ${{ env.P_VERSION_CODE }}
@@ -211,7 +215,11 @@ jobs:
           AAPT=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt | sort -V | tail -1)
           PKG=$("$AAPT" dump badging "$APK" | grep -o "package: name='[^']*'" | cut -d"'" -f2)
           if [ "$PKG" != "$P_PACKAGE_NAME" ]; then echo "包名不符: $PKG"; exit 1; fi
-          "$AAPT" dump badging "$APK" | grep -E "^(package|application-label|native-code)"
+          LABEL=$("$AAPT" dump badging "$APK" | grep -o "^application-label:'[^']*'" | cut -d"'" -f2)
+          if [ "$LABEL" != "$P_APP_NAME" ]; then echo "应用名不符"; exit 1; fi
+          "$AAPT" dump badging "$APK" | grep -E "^native-code"
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs "$APK" | grep -E "certificate DN|SHA-256" | head -2
           SAFE=$(python3 -c 'import re,sys; print(re.sub(r"[^\w.-]+", "_", sys.argv[1]).strip("_"))' "$P_APP_NAME")
           mkdir -p dist
           cp "$APK" "dist/${SAFE:-app}-${P_VERSION_NAME}.apk"
