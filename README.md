@@ -25,6 +25,6 @@ Tern 安卓客户端的打包流水线。这个仓库是公开的,GitHub Actions
 4. Gradle 出 release 包,`aapt` 核对包名。
 5. 上传 artifact(保留 3 天),有 `notify_chat_id` 时发到 Telegram。
 
-机器人传的参数(`client_payload`):`build_id`、`app_name`、`package_name`、`version_name`、`version_code`、`panel_urls`、
+机器人传的参数:`client_payload.build_id`(run 的标题)和 `client_payload.params`(GitHub 限制顶层最多 10 个字段,所以包一层),`params` 里有:`app_name`、`package_name`、`version_name`、`version_code`、`panel_urls`、
 `api_prefix`、`config_urls`、`config_xor_key`、`logo_url` 或 `logo_file_id`、`brand_color`、`abis`、
 `keystore_b64`、`keystore_password`、`key_alias`、`notify_chat_id`、`source_ref`。

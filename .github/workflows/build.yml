@@ -52,7 +52,8 @@ jobs:
           python3 - <<'PY'
           import json, os, re, base64
           event = json.load(open(os.environ["GITHUB_EVENT_PATH"]))
-          p = {**(event.get("inputs") or {}), **(event.get("client_payload") or {})}
+          # 机器人的参数在 client_payload.params 里(GitHub 限制 client_payload 顶层最多 10 个字段)。
+          p = {**(event.get("inputs") or {}), **((event.get("client_payload") or {}).get("params") or {})}
           def need(k, default=""):
               v = str(p.get(k) or default).strip()
               return v
