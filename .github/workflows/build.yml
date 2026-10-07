@@ -1,0 +1,263 @@
+name: Build
+# 机器人触发时 build_id 是随机串,公开页面上看不出是哪个品牌。
+run-name: ${{ github.event.client_payload.build_id || format('manual-{0}', github.run_number) }}
+
+on:
+  # 打包机器人走这条:POST /repos/{repo}/dispatches,参数在 client_payload 里。
+  repository_dispatch:
+    types: [build]
+  # 手动在 Actions 页面点也能打(签名用仓库 secrets 里的 KEYSTORE_B64)。
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: 应用名
+        required: true
+      package_name:
+        description: 包名(如 com.example.app)
+        required: true
+      version_name:
+        description: 版本号
+        default: "1.0.0"
+      version_code:
+        description: 版本序号(整数,每次发布要比上次大)
+        default: "1"
+      panel_urls:
+        description: 面板地址,多个用逗号分隔
+        required: true
+      api_prefix:
+        description: 接口前缀
+        default: /api/v1
+      logo_url:
+        description: logo 图片链接(可空,用默认图标)
+        default: ""
+      brand_color:
+        description: 品牌色,如 #2F6BFF(可空)
+        default: ""
+      abis:
+        description: 打进包的 ABI
+        default: arm64-v8a,armeabi-v7a
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: 读取参数
+        env:
+          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          INPUTS: ${{ toJson(inputs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, base64
+          payload = json.loads(os.environ.get("PAYLOAD") or "null") or {}
+          inputs = json.loads(os.environ.get("INPUTS") or "null") or {}
+          p = {**inputs, **payload}
+          def need(k, default=""):
+              v = str(p.get(k) or default).strip()
+              return v
+          out = {
+              "P_APP_NAME": need("app_name"),
+              "P_PACKAGE_NAME": need("package_name"),
+              "P_VERSION_NAME": need("version_name", "1.0.0"),
+              "P_VERSION_CODE": need("version_code", "1"),
+              "P_PANEL_URLS": need("panel_urls"),
+              "P_API_PREFIX": need("api_prefix", "/api/v1"),
+              "P_CONFIG_URLS": need("config_urls"),
+              "P_CONFIG_XOR_KEY": need("config_xor_key"),
+              "P_LOGO_URL": need("logo_url"),
+              "P_LOGO_FILE_ID": need("logo_file_id"),
+              "P_BRAND_COLOR": need("brand_color"),
+              "P_ABIS": need("abis", "arm64-v8a,armeabi-v7a"),
+              "P_NOTIFY_CHAT_ID": need("notify_chat_id"),
+              "P_SOURCE_REF": need("source_ref", "main"),
+              "P_KEY_ALIAS": need("key_alias", "tern"),
+          }
+          if not out["P_APP_NAME"] or not out["P_PACKAGE_NAME"] or not out["P_PANEL_URLS"]:
+              raise SystemExit("app_name / package_name / panel_urls 不能为空")
+          if not re.fullmatch(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+", out["P_PACKAGE_NAME"]):
+              raise SystemExit("包名格式不对: " + out["P_PACKAGE_NAME"])
+          if re.search(r"[&<>\"'\\\\$`]", out["P_APP_NAME"]):
+              raise SystemExit("应用名里不能有 & < > \" ' \\ $ ` 这些字符")
+          if not re.fullmatch(r"\d+", out["P_VERSION_CODE"]):
+              raise SystemExit("version_code 必须是整数")
+          # 机器人给的每品牌签名文件:写到工作区外,密码打码。
+          ks = str(p.get("keystore_b64") or "").strip()
+          pw = str(p.get("keystore_password") or "").strip()
+          if ks and pw:
+              path = os.path.join(os.environ["RUNNER_TEMP"], "brand.p12")
+              with open(path, "wb") as f:
+                  f.write(base64.b64decode(ks))
+              print("::add-mask::" + pw)
+              out["P_KEYSTORE_FILE"] = path
+              out["P_KEYSTORE_PASSWORD"] = pw
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              for k, v in out.items():
+                  f.write(f"{k}<<__EOV__\n{v}\n__EOV__\n")
+          print("app:", out["P_APP_NAME"], out["P_PACKAGE_NAME"], out["P_VERSION_NAME"], f"({out['P_VERSION_CODE']})",
+                "abis:", out["P_ABIS"], "logo:", "yes" if (out["P_LOGO_URL"] or out["P_LOGO_FILE_ID"]) else "default",
+                "signing:", "brand" if ks else "repo-secret")
+          PY
+
+      - name: 取打包脚本
+        uses: actions/checkout@v4
+        with:
+          path: tools
+
+      - name: 取客户端源码(私有仓库)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.SOURCE_REPO }}
+          ssh-key: ${{ secrets.SOURCE_SSH_KEY }}
+          ref: ${{ env.P_SOURCE_REF }}
+          path: src
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: src/core/go.mod
+          cache-dependency-path: src/core/go.sum
+
+      - name: Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          add-to-path: false
+
+      # 内核(官方 mihomo,gomobile 编译)按 core/ 目录内容缓存:源码没动就不用每次重编十几分钟。
+      - name: 内核缓存
+        id: core-cache
+        uses: actions/cache@v4
+        with:
+          path: src/app/libs/mihomo.aar
+          key: core-r27c-${{ env.P_ABIS }}-${{ hashFiles('src/core/**') }}
+
+      - name: 编译内核
+        if: steps.core-cache.outputs.cache-hit != 'true'
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          GOFLAGS: -buildvcs=false
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          gomobile init
+          # ABI → gomobile 目标
+          TARGETS=$(echo "$P_ABIS" | tr ',' '\n' | sed -e 's/arm64-v8a/android\/arm64/' -e 's/armeabi-v7a/android\/arm/' -e 's/x86_64/android\/amd64/' -e 's/^x86$/android\/386/' | paste -sd, -)
+          echo "gomobile targets: $TARGETS"
+          TARGETS="$TARGETS" bash src/core/build.sh
+
+      - name: 品牌图标与颜色
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          pip3 install -q pillow
+          python3 tools/scripts/android_icons.py --res src/app/src/main/res \
+            --logo-url "$P_LOGO_URL" --logo-file-id "$P_LOGO_FILE_ID" --brand-color "$P_BRAND_COLOR"
+
+      - name: 签名文件
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          if [ -n "$P_KEYSTORE_FILE" ]; then
+            echo "用本次参数里的品牌签名"
+          elif [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/repo.p12"
+            echo "P_KEYSTORE_FILE=$RUNNER_TEMP/repo.p12" >> "$GITHUB_ENV"
+            echo "P_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            [ -n "$KEY_ALIAS" ] && echo "P_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "用仓库 secrets 里的签名"
+          else
+            echo "::warning::没有签名文件,APK 用 debug 签名,不能用来发布"
+          fi
+
+      - name: Gradle 缓存
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 打包
+        working-directory: src
+        env:
+          APP_NAME: ${{ env.P_APP_NAME }}
+          APP_ID: ${{ env.P_PACKAGE_NAME }}
+          VERSION_NAME: ${{ env.P_VERSION_NAME }}
+          VERSION_CODE: ${{ env.P_VERSION_CODE }}
+          PANEL_URLS: ${{ env.P_PANEL_URLS }}
+          API_PREFIX: ${{ env.P_API_PREFIX }}
+          CONFIG_URLS: ${{ env.P_CONFIG_URLS }}
+          CONFIG_XOR_KEY: ${{ env.P_CONFIG_XOR_KEY }}
+          TERN_ABIS: ${{ env.P_ABIS }}
+          KEYSTORE_FILE: ${{ env.P_KEYSTORE_FILE }}
+          storePassword: ${{ env.P_KEYSTORE_PASSWORD }}
+          keyPassword: ${{ env.P_KEYSTORE_PASSWORD }}
+          keyAlias: ${{ env.P_KEY_ALIAS }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -q :app:assembleRelease
+
+      - name: 核对产物
+        run: |
+          APK=src/app/build/outputs/apk/release/app-release.apk
+          test -f "$APK"
+          AAPT=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt | sort -V | tail -1)
+          PKG=$("$AAPT" dump badging "$APK" | grep -o "package: name='[^']*'" | cut -d"'" -f2)
+          if [ "$PKG" != "$P_PACKAGE_NAME" ]; then echo "包名不符: $PKG"; exit 1; fi
+          "$AAPT" dump badging "$APK" | grep -E "^(package|application-label|native-code)"
+          SAFE=$(python3 -c 'import re,sys; print(re.sub(r"[^\w.-]+", "_", sys.argv[1]).strip("_"))' "$P_APP_NAME")
+          mkdir -p dist
+          cp "$APK" "dist/${SAFE:-app}-${P_VERSION_NAME}.apk"
+          ls -lh dist
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ github.run_id }}
+          path: dist/*.apk
+          retention-days: 3
+
+      - name: 发到 Telegram
+        if: always() && env.P_NOTIFY_CHAT_ID != ''
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ env.P_NOTIFY_CHAT_ID }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 - <<'PY'
+          import os, glob, json, urllib.request, uuid
+          token = os.environ.get("BOT_TOKEN", "")
+          if not token:
+              print("没有 TELEGRAM_BOT_TOKEN,跳过"); raise SystemExit(0)
+          api = f"https://api.telegram.org/bot{token}"
+          chat = os.environ["CHAT_ID"]
+          name, ver, code = os.environ["P_APP_NAME"], os.environ["P_VERSION_NAME"], os.environ["P_VERSION_CODE"]
+          def post(method, fields, file=None):
+              boundary = uuid.uuid4().hex
+              body = b""
+              for k, v in fields.items():
+                  body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
+              if file:
+                  fname, data = file
+                  body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"document\"; filename=\"{fname}\"\r\nContent-Type: application/octet-stream\r\n\r\n".encode() + data + b"\r\n"
+              body += f"--{boundary}--\r\n".encode()
+              req = urllib.request.Request(f"{api}/{method}", data=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+              with urllib.request.urlopen(req, timeout=300) as r:
+                  return json.loads(r.read())
+          apks = glob.glob("dist/*.apk")
+          if os.environ["JOB_STATUS"] == "success" and apks:
+              for apk in apks:
+                  with open(apk, "rb") as f:
+                      post("sendDocument", {"chat_id": chat, "caption": f"✅ {name} {ver} ({code}) 打包完成"}, (os.path.basename(apk), f.read()))
+          else:
+              post("sendMessage", {"chat_id": chat, "text": f"❌ {name} {ver} 打包失败\n{os.environ['RUN_URL']}"})
+          print("已通知")
+          PY
