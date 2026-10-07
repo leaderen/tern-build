@@ -70,6 +70,8 @@ jobs:
               "P_LOGO_FILE_ID": need("logo_file_id"),
               "P_BRAND_COLOR": need("brand_color"),
               "P_ABIS": need("abis", "arm64-v8a,armeabi-v7a"),
+              # 缓存 key 里不能有逗号。
+              "P_ABIS_KEY": need("abis", "arm64-v8a,armeabi-v7a").replace(",", "_").replace(" ", ""),
               "P_NOTIFY_CHAT_ID": need("notify_chat_id"),
               "P_SOURCE_REF": need("source_ref", "main"),
               "P_KEY_ALIAS": need("key_alias", "tern"),
@@ -143,7 +145,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src/app/libs/mihomo.aar
-          key: core-r27c-${{ env.P_ABIS }}-${{ hashFiles('src/core/**') }}
+          key: core-r27c-${{ env.P_ABIS_KEY }}-${{ hashFiles('src/core/**') }}
 
       - name: 编译内核
         if: steps.core-cache.outputs.cache-hit != 'true'
