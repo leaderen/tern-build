@@ -23,7 +23,9 @@ Tern 安卓客户端的打包流水线。这个仓库是公开的,GitHub Actions
 2. 拉源码;按 `core/` 内容缓存内核 `mihomo.aar`,源码没变就不重编(重编约十几分钟)。
 3. `scripts/android_icons.py`:logo → 启动器图标 / 通知栏剪影 / 品牌色。
 4. Gradle 出 release 包,`aapt` 核对包名。
-5. 上传 artifact(保留 3 天),有 `notify_chat_id` 时发到 Telegram。
+5. 有 `notify_chat_id`(机器人打包)时把 APK 发到 Telegram,不留 artifact;手动打包时上传 artifact(保留 3 天)。
+
+这是公开仓库,日志和 artifact 登录用户都能看:参数只从事件文件读,应用名 / 包名 / 面板地址等在日志里打码。
 
 机器人传的参数:`client_payload.build_id`(run 的标题)和 `client_payload.params`(GitHub 限制顶层最多 10 个字段,所以包一层),`params` 里有:`app_name`、`package_name`、`version_name`、`version_code`、`panel_urls`、
 `api_prefix`、`config_urls`、`config_xor_key`、`logo_url` 或 `logo_file_id`、`brand_color`、`abis`、

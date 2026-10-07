@@ -220,13 +220,16 @@ jobs:
           if [ "$LABEL" != "$P_APP_NAME" ]; then echo "应用名不符"; exit 1; fi
           "$AAPT" dump badging "$APK" | grep -E "^native-code"
           APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
-          "$APKSIGNER" verify --print-certs "$APK" | grep -E "certificate DN|SHA-256" | head -2
+          "$APKSIGNER" verify --print-certs "$APK" | grep -E "certificate SHA-256" | head -1
           SAFE=$(python3 -c 'import re,sys; print(re.sub(r"[^\w.-]+", "_", sys.argv[1]).strip("_"))' "$P_APP_NAME")
           mkdir -p dist
           cp "$APK" "dist/${SAFE:-app}-${P_VERSION_NAME}.apk"
-          ls -lh dist
+          # 文件名里有品牌名,只打印大小。
+          du -h dist | tail -1 | cut -f1
 
+      # 公开仓库的 artifact 登录用户都能下载。机器人打的包只发 Telegram,不留在这里。
       - name: 上传产物
+        if: env.P_NOTIFY_CHAT_ID == ''
         uses: actions/upload-artifact@v4
         with:
           name: apk-${{ github.run_id }}
