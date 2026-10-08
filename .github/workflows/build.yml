@@ -73,6 +73,7 @@ jobs:
               "P_LOGO_FILE_ID": need("logo_file_id"),
               "P_BRAND_COLOR": need("brand_color"),
               "P_USER_AGENT": need("user_agent"),
+              "P_DEFAULT_CONFIG_B64": need("default_config_b64"),
               "P_ABIS": need("abis", "arm64-v8a,armeabi-v7a"),
               # 缓存 key 里不能有逗号。
               "P_ABIS_KEY": need("abis", "arm64-v8a,armeabi-v7a").replace(",", "_").replace(" ", ""),
@@ -88,6 +89,8 @@ jobs:
               raise SystemExit("应用名里不能有 & < > \" ' \\ $ ` 这些字符")
           if out["P_USER_AGENT"] and not re.fullmatch(r"[\x20-\x7E]{1,120}", out["P_USER_AGENT"]):
               raise SystemExit("user_agent 只能是可见的英文字符,最长 120")
+          if out["P_DEFAULT_CONFIG_B64"]:
+              json.loads(base64.b64decode(out["P_DEFAULT_CONFIG_B64"]))   # 不是合法 JSON 就在这里报错
           if not re.fullmatch(r"\d+", out["P_VERSION_CODE"]):
               raise SystemExit("version_code 必须是整数")
           # 机器人给的每品牌签名文件:写到工作区外,密码打码。
@@ -101,7 +104,7 @@ jobs:
               out["P_KEYSTORE_FILE"] = path
               out["P_KEYSTORE_PASSWORD"] = pw
           for k in ("P_APP_NAME", "P_PACKAGE_NAME", "P_PANEL_URLS", "P_CONFIG_URLS", "P_CONFIG_XOR_KEY",
-                    "P_LOGO_URL", "P_LOGO_FILE_ID", "P_NOTIFY_CHAT_ID", "P_USER_AGENT"):
+                    "P_LOGO_URL", "P_LOGO_FILE_ID", "P_NOTIFY_CHAT_ID", "P_USER_AGENT", "P_DEFAULT_CONFIG_B64"):
               v = out[k]
               for part in {v, *v.split(",")}:
                   if len(part) >= 4:
@@ -209,6 +212,7 @@ jobs:
           CONFIG_URLS: ${{ env.P_CONFIG_URLS }}
           CONFIG_XOR_KEY: ${{ env.P_CONFIG_XOR_KEY }}
           USER_AGENT: ${{ env.P_USER_AGENT }}
+          DEFAULT_CONFIG_B64: ${{ env.P_DEFAULT_CONFIG_B64 }}
           TERN_ABIS: ${{ env.P_ABIS }}
           KEYSTORE_FILE: ${{ env.P_KEYSTORE_FILE }}
           storePassword: ${{ env.P_KEYSTORE_PASSWORD }}
