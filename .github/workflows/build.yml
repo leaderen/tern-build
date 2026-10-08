@@ -33,6 +33,9 @@ on:
       brand_color:
         description: 品牌色,如 #2F6BFF(可空)
         default: ""
+      user_agent:
+        description: 自定义 UA(可空;{version} 代表版本号)
+        default: ""
       abis:
         description: 打进包的 ABI
         default: arm64-v8a,armeabi-v7a
@@ -69,6 +72,7 @@ jobs:
               "P_LOGO_URL": need("logo_url"),
               "P_LOGO_FILE_ID": need("logo_file_id"),
               "P_BRAND_COLOR": need("brand_color"),
+              "P_USER_AGENT": need("user_agent"),
               "P_ABIS": need("abis", "arm64-v8a,armeabi-v7a"),
               # 缓存 key 里不能有逗号。
               "P_ABIS_KEY": need("abis", "arm64-v8a,armeabi-v7a").replace(",", "_").replace(" ", ""),
@@ -82,6 +86,8 @@ jobs:
               raise SystemExit("包名格式不对: " + out["P_PACKAGE_NAME"])
           if re.search(r"[&<>\"'\\\\$`]", out["P_APP_NAME"]):
               raise SystemExit("应用名里不能有 & < > \" ' \\ $ ` 这些字符")
+          if out["P_USER_AGENT"] and not re.fullmatch(r"[\x20-\x7E]{1,120}", out["P_USER_AGENT"]):
+              raise SystemExit("user_agent 只能是可见的英文字符,最长 120")
           if not re.fullmatch(r"\d+", out["P_VERSION_CODE"]):
               raise SystemExit("version_code 必须是整数")
           # 机器人给的每品牌签名文件:写到工作区外,密码打码。
@@ -95,7 +101,7 @@ jobs:
               out["P_KEYSTORE_FILE"] = path
               out["P_KEYSTORE_PASSWORD"] = pw
           for k in ("P_APP_NAME", "P_PACKAGE_NAME", "P_PANEL_URLS", "P_CONFIG_URLS", "P_CONFIG_XOR_KEY",
-                    "P_LOGO_URL", "P_LOGO_FILE_ID", "P_NOTIFY_CHAT_ID"):
+                    "P_LOGO_URL", "P_LOGO_FILE_ID", "P_NOTIFY_CHAT_ID", "P_USER_AGENT"):
               v = out[k]
               for part in {v, *v.split(",")}:
                   if len(part) >= 4:
@@ -202,6 +208,7 @@ jobs:
           API_PREFIX: ${{ env.P_API_PREFIX }}
           CONFIG_URLS: ${{ env.P_CONFIG_URLS }}
           CONFIG_XOR_KEY: ${{ env.P_CONFIG_XOR_KEY }}
+          USER_AGENT: ${{ env.P_USER_AGENT }}
           TERN_ABIS: ${{ env.P_ABIS }}
           KEYSTORE_FILE: ${{ env.P_KEYSTORE_FILE }}
           storePassword: ${{ env.P_KEYSTORE_PASSWORD }}

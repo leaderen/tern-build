@@ -28,5 +28,5 @@ Tern 安卓客户端的打包流水线。这个仓库是公开的,GitHub Actions
 这是公开仓库,日志和 artifact 登录用户都能看:参数只从事件文件读,应用名 / 包名 / 面板地址等在日志里打码。
 
 机器人传的参数:`client_payload.build_id`(run 的标题)和 `client_payload.params`(GitHub 限制顶层最多 10 个字段,所以包一层),`params` 里有:`app_name`、`package_name`、`version_name`、`version_code`、`panel_urls`、
-`api_prefix`、`config_urls`、`config_xor_key`、`logo_url` 或 `logo_file_id`、`brand_color`、`abis`、
+`api_prefix`、`config_urls`、`config_xor_key`、`logo_url` 或 `logo_file_id`、`brand_color`、`user_agent`、`abis`、
 `keystore_b64`、`keystore_password`、`key_alias`、`notify_chat_id`、`source_ref`。
