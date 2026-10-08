@@ -29,18 +29,35 @@ import brand_logo as bl  # noqa: E402
 DENSITIES = {"mdpi": 1.0, "hdpi": 1.5, "xhdpi": 2.0, "xxhdpi": 3.0, "xxxhdpi": 4.0}
 
 
+MAX_LOGO_BYTES = 20 * 1024 * 1024
+
+
 def fetch(url, retries=4):
-    last = None
+    # 只走 https:urllib 还认 file:// 和 ftp://,不能让一个"logo 地址"去读构建机上的文件。
+    if not url.startswith("https://"):
+        raise SystemExit("logo 地址必须是 https://")
     for i in range(retries):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "tern-build/1.0"})
+            deadline = time.time() + 120          # 整个下载的时限;timeout 只管单次读写
+            chunks, size = [], 0
             with urllib.request.urlopen(req, timeout=30) as r:
-                return r.read()
+                while True:
+                    chunk = r.read(256 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > MAX_LOGO_BYTES or time.time() > deadline:
+                        raise SystemExit("logo 文件太大或下载太慢(上限 20MB / 2 分钟)")
+                    chunks.append(chunk)
+            return b"".join(chunks)
+        except SystemExit:
+            raise
         except Exception as e:  # noqa: BLE001
-            last = e
-            print(f"[icons] 下载失败({i + 1}/{retries}): {e}")
+            # 不打印异常正文:里面可能带着地址(Telegram 的地址里有 token)。
+            print(f"[icons] 下载失败({i + 1}/{retries}): {type(e).__name__}")
             time.sleep(2 * (i + 1))
-    raise last
+    raise SystemExit("logo 下载失败")
 
 
 def telegram_file(file_id):
@@ -49,7 +66,7 @@ def telegram_file(file_id):
         raise SystemExit("logo 是 Telegram 文件,但没有配置 TELEGRAM_BOT_TOKEN")
     info = json.loads(fetch(f"https://api.telegram.org/bot{token}/getFile?file_id={urllib.parse.quote(file_id)}"))
     if not info.get("ok"):
-        raise SystemExit("Telegram getFile 失败: " + str(info)[:200])
+        raise SystemExit("Telegram getFile 失败(logo 可能已失效,请在机器人里重新上传)")
     return fetch(f"https://api.telegram.org/file/bot{token}/{info['result']['file_path']}")
 
 
@@ -101,11 +118,15 @@ def main():
 
     if data is None:
         write_colors(res, brand=brand or None)
-        print("[icons] 没有 logo,保留默认图标" + (f",品牌色 {brand}" if brand else ""))
+        print("[icons] 没有 logo,保留默认图标" + (",已设置品牌色" if brand else ""))
         return
 
-    img = Image.open(io.BytesIO(data))
-    img.load()
+    try:
+        # 只认这三种常见格式,别把 Pillow 里所有冷门解码器都暴露给外来文件。
+        img = Image.open(io.BytesIO(data), formats=["PNG", "JPEG", "WEBP"])
+        img.load()
+    except Exception:  # noqa: BLE001
+        raise SystemExit("logo 不是能识别的图片,请用 PNG / JPG / WebP")
     sq, info = bl.normalize(img, brand_color=brand or None)
     print(f"[icons] logo {img.size} → 方图 {sq.size},类型 {info['kind']}")
 
@@ -142,7 +163,7 @@ def main():
         print("[icons] logo 做不出剪影,通知栏保留默认图标")
 
     write_colors(res, brand=brand or None, launcher_bg=bl.android_background_hex(sq))
-    print("[icons] 图标已写入" + (f",品牌色 {brand}" if brand else ""))
+    print("[icons] 图标已写入" + (",已设置品牌色" if brand else ""))
 
 
 if __name__ == "__main__":

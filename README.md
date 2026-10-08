@@ -25,8 +25,13 @@ Tern 安卓客户端的打包流水线。这个仓库是公开的,GitHub Actions
 4. Gradle 出 release 包,`aapt` 核对包名。
 5. 有 `notify_chat_id`(机器人打包)时把 APK 发到 Telegram,不留 artifact;手动打包时上传 artifact(保留 3 天)。
 
-这是公开仓库,日志和 artifact 登录用户都能看:参数只从事件文件读,应用名 / 包名 / 面板地址等在日志里打码。
+这是公开仓库,日志和 artifact 登录用户都能看,所以(细节见 `scripts/params.py`):
+
+- 参数只从事件文件读;能认出品牌的值不进 `$GITHUB_ENV`、不进任何步骤的 `env:`,存在 `$RUNNER_TEMP/params.json`,各步骤用 `eval "$(python3 tools/scripts/params.py env …)"` 取。
+- 这些值另外全部打码(包括两三个字的应用名、面板域名);校验失败只报是哪一项,不打印值。
+- 签名证书的指纹不打印:机器人把期望的指纹传过来,CI 只比对、不显示。
+- 机器人打的包只发 Telegram;发送失败(超过 50MB、网络问题)时才留一份 1 天的 artifact 并把链接发给机器人。
 
 机器人传的参数:`client_payload.build_id`(run 的标题)和 `client_payload.params`(GitHub 限制顶层最多 10 个字段,所以包一层),`params` 里有:`app_name`、`package_name`、`version_name`、`version_code`、`panel_urls`、
 `api_prefix`、`config_urls`、`config_xor_key`、`logo_url` 或 `logo_file_id`、`brand_color`、`user_agent`、`default_config_b64`、`abis`、
-`keystore_b64`、`keystore_password`、`key_alias`、`notify_chat_id`、`source_ref`。
+`keystore_b64`、`keystore_password`、`key_alias`、`cert_sha256`、`notify_chat_id`、`source_ref`。
